@@ -4,10 +4,7 @@ from tqdm import tqdm
 import os
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import matplotlib.pyplot as plt
-import warnings
-from itertools import product
-
-warnings.filterwarnings("ignore")
+import argparse
 
 def find_cluster_centroid(df):
     torsion_dist_array = np.zeros((len(df.index), len(df.index)))
@@ -61,8 +58,13 @@ def torsion_distance(row1, row2):
         sq_sum += (angle_diff(row1[f'Phi {i}'], row2[f'Phi {i}']))**2 + (angle_diff(row1[f'Psi {i}'], row2[f'Psi {i}']))**2
     return np.sqrt(sq_sum)    
 
-num_tot_clusters = 1000
-min_cluster = 5
+parser = argparse.ArgumentParser(description = 'Cluster 4-mers Based on Torsional Distance and Sequence')
+parser.add_argument('--num_total', '-n', required=True, help='Total # of Conformers Desired')
+parser.add_argument('--num_cluster', '-c', required=True, help='# of Clusters for Each Selected Sequence')
+
+args = parser.parse_args()
+num_tot_clusters = args.nt
+num_cluster = args.mc
 
 top8000_dihe = pd.read_csv('../Top8000/Top8000_dihe_seq.csv', index_col=0)
 if not os.path.exists('4mer_torsion_raw.csv'):
@@ -127,13 +129,13 @@ else:
     num_seq_all = np.zeros(len(sequence_list))
     for s, simp_seq in enumerate(sequence_list):
         simp_seq_df = tor_4mer_df[tor_4mer_df['Simplified Sequence'] == simp_seq]
-        num_seq = int(num_tot_clusters/min_cluster * simp_seq_freq[simp_seq_freq['Sequence'] == simp_seq]['Frequency'].values[0] / total_freq)
+        num_seq = int(num_tot_clusters/num_cluster * simp_seq_freq[simp_seq_freq['Sequence'] == simp_seq]['Frequency'].values[0] / total_freq)
         if num_seq == 0:
             num_seq_all[s] = 1
         else:
             num_seq_all[s] = num_seq
     prev_index = np.nan
-    while sum(num_seq_all) > num_tot_clusters/min_cluster:
+    while sum(num_seq_all) > num_tot_clusters/num_cluster:
         sorted_indices = np.argsort(num_seq_all)
         if prev_index != sorted_indices[-1]:
             prev_index = sorted_indices[-1]
@@ -143,6 +145,9 @@ else:
     num_seq_add = pd.DataFrame({'Simplified Sequence': sequence_list, 'Num Seq': num_seq_all})
     num_seq_add.to_csv(f'4mer_seq_num_{num_tot_clusters}.csv')
 
+if not os.path.exists('HC'):
+    os.mkdir('HC')
+    
 for simp_seq in tqdm(sequence_list):
     if len(selected_conformers) == 0 or simp_seq not in selected_conformers['Simplified Sequence'].values:
         simp_seq_df = tor_4mer_df[tor_4mer_df['Simplified Sequence'] == simp_seq] 
@@ -152,7 +157,7 @@ for simp_seq in tqdm(sequence_list):
             seq_select = []
             for seq in seq_list:
                 seq_df = tor_4mer_df[tor_4mer_df['Sequence'] == seq]
-                if len(seq_df.index) > min_cluster:
+                if len(seq_df.index) > num_cluster:
                     seq_select.append(seq)
         else:
             seq_list_freq = np.zeros(len(seq_list))
@@ -161,7 +166,7 @@ for simp_seq in tqdm(sequence_list):
             sorted_index_seq_list_freq = np.flip(np.argsort(seq_list_freq))
             seq_select = []
             for idx in sorted_index_seq_list_freq:
-                if seq_list_freq[idx] > min_cluster:
+                if seq_list_freq[idx] > num_cluster:
                     seq_select.append(seq_list[idx])
                 if len(seq_select) == num_seq:
                     break
@@ -188,7 +193,7 @@ for simp_seq in tqdm(sequence_list):
             plt.savefig(f'HC/hierarch_cluster_{seq}.png')
             plt.close()
     
-            clusters = fcluster(linkage_matrix, t=min_cluster, criterion='maxclust')
+            clusters = fcluster(linkage_matrix, t=num_cluster, criterion='maxclust')
             seq_df['Cluster'] = clusters
             cluster_4mer_df = pd.concat([cluster_4mer_df, seq_df])
             seq_df['Identifier'] = np.arange(len(seq_df.index))

@@ -56,10 +56,15 @@ def process_line(line):
         line.insert(8, text[end:])
     return line
 
+if not os.path.exists('selected_4mers'):
+    os.mkdir('selected_4mers')
+if not os.path.exists('selected_6mers'):
+    os.mkdir('selected_6mers')
 
 selected_4mers = pd.read_csv('selected_4mers.csv', index_col=0)
 error_index = []
 phi1, phi2, phi3, phi4, psi1, psi2, psi3, psi4 = [],[],[],[],[],[],[],[]
+dihe_err = pd.DataFrame()
 for i, row in tqdm(selected_4mers.iterrows()):
     #Create a 6-mer to use the extra residues to set the dihedrals
     res_range = row['Res Range']
@@ -140,18 +145,23 @@ for i, row in tqdm(selected_4mers.iterrows()):
         obConversion.WriteFile(mol, f'selected_4mers/{i}.sdf')
 
     #Check Dihedrals
-    #traj = md.load(f'selected_4mers/{i}_noH.pdb')
-    #index, phi = md.compute_phi(traj)
-    #index, psi = md.compute_psi(traj)
-    #phi = phi[0,:] * (180/np.pi)
-    #psi = psi[0,:] * (180/np.pi)
-    #for a, angle in enumerate(phi):
-    #    if angle < 0:
-    #        phi[a] = angle + 360
-    #for a, angle in enumerate(psi):
-    #    if angle < -120:
-    #        psi[a] = angle + 360
+    traj = md.load(f'selected_4mers/{i}_noH.pdb')
+    index, phi = md.compute_phi(traj)
+    index, psi = md.compute_psi(traj)
+    phi = phi[0,:] * (180/np.pi)
+    psi = psi[0,:] * (180/np.pi)
+    for a, angle in enumerate(phi):
+        if angle < 0:
+            phi[a] = angle + 360
+    for a, angle in enumerate(psi):
+        if angle < -120:
+            psi[a] = angle + 360
+    add_dict = {'PDB': pdb, 'Chain': chain, 'Residue Range': res_range}
+    for r in range(4):
+        add_dict[f'Phi {r+1} Error'] = abs(row[f'Phi {r+1}'] - phi[r])
+        add_dict[f'Psi {r+1} Error'] = abs(row[f'Psi {r+1}'] - psi[r])
+    dihe_err = pd.concat([dihe_err, pd.DataFrame(add_dict)])
 
 error_df = selected_4mers.iloc[error_index]
 error_df.to_csv('error_seq.csv')
-
+dihe_err.to_csv('error_dihe.csv')
