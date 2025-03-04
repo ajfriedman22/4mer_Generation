@@ -5,6 +5,9 @@ import os
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import matplotlib.pyplot as plt
 import argparse
+import warnings
+import random
+from itertools import combinations_with_replacement, product
 
 def find_cluster_centroid(df):
     torsion_dist_array = np.zeros((len(df.index), len(df.index)))
@@ -59,12 +62,12 @@ def torsion_distance(row1, row2):
     return np.sqrt(sq_sum)    
 
 parser = argparse.ArgumentParser(description = 'Cluster 4-mers Based on Torsional Distance and Sequence')
-parser.add_argument('--num_total', '-n', required=True, help='Total # of Conformers Desired')
-parser.add_argument('--num_cluster', '-c', required=True, help='# of Clusters for Each Selected Sequence')
+parser.add_argument('-n', type=int, required=True, help='Total # of Conformers Desired')
+parser.add_argument('-c', type=int, required=True, help='# of Clusters for Each Selected Sequence')
 
 args = parser.parse_args()
-num_tot_clusters = args.nt
-num_cluster = args.mc
+num_tot_clusters = args.n
+num_cluster = args.c
 
 top8000_dihe = pd.read_csv('../Top8000/Top8000_dihe_seq.csv', index_col=0)
 if not os.path.exists('4mer_torsion_raw.csv'):
@@ -72,68 +75,69 @@ if not os.path.exists('4mer_torsion_raw.csv'):
 else:
     tor_4mer_df = pd.read_csv('4mer_torsion_raw.csv', index_col=0)
 
-for pdb in tqdm(top8000_dihe['PDB'].unique()):
-    pdb_df = top8000_dihe[top8000_dihe['PDB'] == pdb]
-    for chain in pdb_df['Chain'].unique():
-        if len(tor_4mer_df.index) == 0 or len(tor_4mer_df[(tor_4mer_df['PDB'] == pdb) & (tor_4mer_df['Chain'] == chain)].index) == 0:
-            res_range, seq, simp_seq, phi1, phi2, phi3, phi4, psi1, psi2, psi3, psi4 = [],[],[],[],[],[],[],[],[],[],[]
-            chain_df = pdb_df[pdb_df['Chain'] == chain]
-            residues = chain_df['Resnum'].to_list()
-            for r in range(len(residues)-1):
-                res_range_str = residues[r:r+4]
-                res1 = int(res_range_str[0])
-                res4 = int(res_range_str[-1])
-                if res4 == res1+3:
-                    df_4mer = chain_df[chain_df['Resnum'].isin(res_range_str)]
-                    seq_r = ''.join([df_4mer.iloc[0,3], df_4mer.iloc[0,4], df_4mer.iloc[3,2], df_4mer.iloc[3,3]])
-                    seq.append(seq_r)
-                    simp_seq_list = []
-                    for s in seq_r:
-                        if s == 'P':
-                            simp_seq_list.append('P')
-                        elif s == 'G':
-                            simp_seq_list.append('G')
-                        elif s in ['I', 'T', 'V']:
-                            simp_seq_list.append('B')
-                        else:
-                            simp_seq_list.append('L')
-                    simp_seq.append(''.join(simp_seq_list))
-                    phi1.append(df_4mer.iloc[0,5])
-                    psi1.append(df_4mer.iloc[0,6])
-                    phi2.append(df_4mer.iloc[1,5])
-                    psi2.append(df_4mer.iloc[1,6])
-                    phi3.append(df_4mer.iloc[2,5])
-                    psi3.append(df_4mer.iloc[2,6])
-                    phi4.append(df_4mer.iloc[3,5])
-                    psi4.append(df_4mer.iloc[3,6])
-                    res_range.append(f'{res1}-{res4}')
-            df = pd.DataFrame({'PDB': pdb, 'Chain': chain, 'Res Range': res_range, 'Sequence': seq, 'Simplified Sequence': simp_seq, 'Phi 1': phi1, 'Psi 1': psi1, 'Phi 2': phi2, 'Psi 2': psi2, 'Phi 3': phi3, 'Psi 3': psi3, 'Phi 4': phi4, 'Psi 4': psi4})
-            tor_4mer_df = pd.concat([tor_4mer_df, df])
-            tor_4mer_df.to_csv('4mer_torsion_raw.csv')
-
-simp_seq_freq = pd.read_csv('4mer_simp_seq_freq.csv', index_col=0)
-total_freq = sum(simp_seq_freq['Frequency'].values)
-
-if os.path.exists('4mer_torsion_cluster.csv') and os.path.exists('selected_4mers.csv'):
-    cluster_4mer_df = pd.read_csv('4mer_torsion_cluster.csv', index_col=0)
-    selected_conformers = pd.read_csv('selected_4mers.csv', index_col=0)
+if len(tor_4mer_df['PDB'].unique()) != len(top8000_dihe['PDB'].unique()):
+    for pdb in tqdm(top8000_dihe['PDB'].unique()):
+        pdb_df = top8000_dihe[top8000_dihe['PDB'] == pdb]
+        for chain in pdb_df['Chain'].unique():
+            if len(tor_4mer_df.index) == 0 or len(tor_4mer_df[(tor_4mer_df['PDB'] == pdb) & (tor_4mer_df['Chain'] == chain)].index) == 0:
+                res_range, seq, simp_seq, phi1, phi2, phi3, phi4, psi1, psi2, psi3, psi4 = [],[],[],[],[],[],[],[],[],[],[]
+                chain_df = pdb_df[pdb_df['Chain'] == chain]
+                residues = chain_df['Resnum'].to_list()
+                for r in range(len(residues)-1):
+                    res_range_str = residues[r:r+4]
+                    res1 = int(res_range_str[0])
+                    res4 = int(res_range_str[-1])
+                    if res4 == res1+3:
+                        df_4mer = chain_df[chain_df['Resnum'].isin(res_range_str)]
+                        seq_r = ''.join([df_4mer.iloc[0,3], df_4mer.iloc[0,4], df_4mer.iloc[3,2], df_4mer.iloc[3,3]])
+                        seq.append(seq_r)
+                        simp_seq_list = []
+                        for s in seq_r:
+                            if s == 'P':
+                                simp_seq_list.append('P')
+                            elif s == 'G':
+                                simp_seq_list.append('G')
+                            elif s in ['I', 'T', 'V']:
+                                simp_seq_list.append('B')
+                            else:
+                                simp_seq_list.append('L')
+                        simp_seq.append(''.join(simp_seq_list))
+                        phi1.append(df_4mer.iloc[0,5])
+                        psi1.append(df_4mer.iloc[0,6])
+                        phi2.append(df_4mer.iloc[1,5])
+                        psi2.append(df_4mer.iloc[1,6])
+                        phi3.append(df_4mer.iloc[2,5])
+                        psi3.append(df_4mer.iloc[2,6])
+                        phi4.append(df_4mer.iloc[3,5])
+                        psi4.append(df_4mer.iloc[3,6])
+                        res_range.append(f'{res1}-{res4}')
+                df = pd.DataFrame({'PDB': pdb, 'Chain': chain, 'Res Range': res_range, 'Sequence': seq, 'Simplified Sequence': simp_seq, 'Phi 1': phi1, 'Psi 1': psi1, 'Phi 2': phi2, 'Psi 2': psi2, 'Phi 3': phi3, 'Psi 3': psi3, 'Phi 4': phi4, 'Psi 4': psi4})
+                tor_4mer_df = pd.concat([tor_4mer_df, df])
+                tor_4mer_df.to_csv('4mer_torsion_raw.csv')
 else:
-    cluster_4mer_df = pd.DataFrame()
-    selected_conformers = pd.DataFrame()
+    print('Completed 4mer_torsion_raw.csv file input')
+
+if os.path.exists('4mer_simp_seq_freq.csv'):
+    simp_seq_freq = pd.read_csv('4mer_simp_seq_freq.csv', index_col=0)
+else:
+    unique_seq = [''.join(combination) for combination in product(tuple('LGPB'), repeat=4)]
+    num_4mer = np.zeros(len(unique_seq))
+    for s, seq in enumerate(unique_seq):
+        num_4mer[s] = len(tor_4mer_df[tor_4mer_df['Simplified Sequence'] == seq].index)
+    simp_seq_freq = pd.DataFrame({'Sequence': unique_seq, 'Frequency': num_4mer})
+    simp_seq_freq.to_csv('4mer_simp_seq_freq.csv')
+
+total_freq = sum(simp_seq_freq['Frequency'].values)
 
 if os.path.exists(f'4mer_seq_num_{num_tot_clusters}.csv'):
     num_seq_add = pd.read_csv(f'4mer_seq_num_{num_tot_clusters}.csv', index_col=0)
-    sequence_list = num_seq_add['Simplified Sequence'].to_list()
 else:
     sequence_list = list(simp_seq_freq[simp_seq_freq['Frequency'] > 0]['Sequence'].values)
     num_seq_all = np.zeros(len(sequence_list))
     for s, simp_seq in enumerate(sequence_list):
-        simp_seq_df = tor_4mer_df[tor_4mer_df['Simplified Sequence'] == simp_seq]
-        num_seq = int(num_tot_clusters/num_cluster * simp_seq_freq[simp_seq_freq['Sequence'] == simp_seq]['Frequency'].values[0] / total_freq)
-        if num_seq == 0:
-            num_seq_all[s] = 1
-        else:
-            num_seq_all[s] = num_seq
+        freq = simp_seq_freq[simp_seq_freq['Sequence'] == simp_seq]['Frequency'].values[0]
+        num_seq = int((num_tot_clusters/num_cluster) * (freq / total_freq))
+        num_seq_all[s] = num_seq
     prev_index = np.nan
     while sum(num_seq_all) > num_tot_clusters/num_cluster:
         sorted_indices = np.argsort(num_seq_all)
@@ -142,13 +146,32 @@ else:
         else:
             prev_index = sorted_indices[-2]
         num_seq_all[prev_index] -= 1
+    
+    #Add to the simplified sequence with the highest frequency of all 0 sequences
+    freq_array = simp_seq_freq['Frequency'].values
+    max_indices = np.argsort(freq_array)[::-1] #indices from highest to lowest
+    while sum(num_seq_all) < num_tot_clusters/num_cluster:
+        zero_indices = np.where(num_seq_all == 0)[0]
+        for i in max_indices:
+            if i in zero_indices:
+                index = i
+                break
+        num_seq_all[index] += 1
     num_seq_add = pd.DataFrame({'Simplified Sequence': sequence_list, 'Num Seq': num_seq_all})
     num_seq_add.to_csv(f'4mer_seq_num_{num_tot_clusters}.csv')
 
+if os.path.exists('4mer_torsion_cluster.csv') and os.path.exists('selected_4mers.csv'):
+    cluster_4mer_df = pd.read_csv('4mer_torsion_cluster.csv', index_col=0)
+    selected_conformers = pd.read_csv('selected_4mers.csv', index_col=0)
+else:
+    cluster_4mer_df = pd.DataFrame()
+    selected_conformers = pd.DataFrame()
+
 if not os.path.exists('HC'):
     os.mkdir('HC')
-    
-for simp_seq in tqdm(sequence_list):
+
+list_all_simp_seq = num_seq_add[num_seq_add['Num Seq'] > 0]['Simplified Sequence'].values
+for simp_seq in tqdm(list_all_simp_seq):
     if len(selected_conformers) == 0 or simp_seq not in selected_conformers['Simplified Sequence'].values:
         simp_seq_df = tor_4mer_df[tor_4mer_df['Simplified Sequence'] == simp_seq] 
         num_seq = num_seq_add[num_seq_add['Simplified Sequence'] == simp_seq]['Num Seq'].values[0]

@@ -9,6 +9,41 @@ import os
 from tqdm import tqdm
 import numpy as np
 import warnings
+
+def get_sequence_from_pdb(pdb_file):
+    """
+    Extracts the protein sequence from a PDB file.
+
+    Args:
+        pdb_file (str): Path to the PDB file.
+
+    Returns:
+        seq (str): The protein sequence as a string
+    """
+    res_dict = {'ARG': 'R', 'HIS': 'H', 'LYS': 'K', 'ASP': 'D', 'GLU': 'E', 'SER': 'S', 'THR': 'T', 'ASN': 'N', 'GLN': 'Q', 'CYS': 'C', 'SEC': 'U', 'GLY': 'G', 'PRO': 'P', 'ALA': 'A', 'VAL': 'V', 'ILE': 'I', 'LEU': 'L', 'MET': 'M', 'PHE': 'F', 'TYR': 'Y', 'TRP': 'W'}
+    seq = ''
+    res_num = None
+    res_num_list = []
+    for line in open(pdb_file, 'r').readlines():
+        if line[:4] == 'ATOM':
+            if line[17:20] == 'HOH':
+                break
+            if res_num is None or res_num != line[22:27]:
+                if line[17:20] not in res_dict.keys():
+                    res_code = 'X'
+                else:
+                    res_code = res_dict[line[17:20]]
+                seq += res_code
+                res_num = line[22:27]
+                res_num_list.append(line[22:26])
+    res_num_list_reset = np.zeros(len(res_num_list))
+    modifier = 1
+    for r, res in enumerate(res_num_list):
+        if res == res_num_list[r-1]:
+            modifier += 1
+        res_num_list_reset[r] = int(res) - int(res_num_list[0]) + modifier
+    return seq, res_num_list_reset
+
 warnings.filterwarnings("ignore")
 plist = PDBList()
 parser = PDBParser()
@@ -32,6 +67,7 @@ for n, row in tqdm(df.iterrows()):
         if not os.path.exists(pdb_file_path):
             plist.retrieve_pdb_file(pdb_code, pdir=dir, file_format='pdb')
             if not os.path.exists(f'PDBs/pdb{pdb_code}.ent'):
+                file_skip.write(f'{pdb_code} {chain} File Not Found\n')
                 continue
             os.rename(f'PDBs/pdb{pdb_code}.ent', pdb_file_path)
 
@@ -45,7 +81,9 @@ for n, row in tqdm(df.iterrows()):
     
         #Get sequence
         seq_all = {record.id: record.seq for record in SeqIO.parse(pdb_file_path, 'pdb-seqres')}
-        seq = list(seq_all[f'{pdb_code.upper()}:{chain}'])
+        full_seq = list(seq_all[f'{pdb_code.upper()}:{chain}'])
+        seq, res_num_list = get_sequence_from_pdb(f'PDB_chain/{pdb_code}_{chain}.pdb')
+
         #Get PDB header
         header = parse_pdb_header(f'{dir}/{pdb_code}.pdb')
     
@@ -61,7 +99,6 @@ for n, row in tqdm(df.iterrows()):
 
         #Determine missing residues
         if header['has_missing_residues']:
-            fail = False
             #Determine which residues are missing
             miss_res = header['missing_residues']
             miss_res_list = []
@@ -69,41 +106,12 @@ for n, row in tqdm(df.iterrows()):
                 if entry['chain'] == chain:
                     miss_res_list.append(entry['ssseq'])
 
-            #Determine residue number for last residue
-            res_list = []
-            for i, line in enumerate(pdb_file):
-                line_s = line.split(' ')
-                if line_s[0] != 'ATOM':
-                    if len(res_list) ==0:
-                        fail = True
-                        break
-                    last = int(res_list[-1])
-                    break
-                while '' in line_s:
-                    line_s.remove('')
-                if len(line_s[4]) == 1:
-                    res_list.append(line_s[5].strip('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
-                else:
-                    res_list.append(line_s[4].strip('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
-                  
-            if fail:
-                file_skip.write(f'{pdb_code} {chain}\n')
-                continue
-
-            #Determine if non-terminal residues are missing
-            miss_res_NT = []
-            for res in miss_res_list:
-                if res>first and res<last:
-                    miss_res_NT.append(int(res)-first)
-                elif res<first:
-                    del seq[0]
-                else:
-                    del seq[-1]
-            miss_res_NT = np.array(miss_res_NT, dtype=int)
+        else:
+            res_num_list = np.arange(1, len(seq)+1, step=1)
 
         #Load with mdtraj
         traj = md.load(f'PDB_chain/{pdb_code}_{chain}.pdb')
-        traj = traj.atom_slice(traj.topology.select('protein'))
+        traj = traj.atom_slice(traj.topology.select(f'protein and resid < {len(res_num_list)}'))
 
         #Compute dihedrals
         index_phi, phi = md.compute_phi(traj)
@@ -121,34 +129,25 @@ for n, row in tqdm(df.iterrows()):
 
         #Format df for saving
         seq_1, seq_2, seq_3, phi_str, psi_str, resnum = [],[],[],[],[],[]
-        if header['has_missing_residues'] and len(miss_res_NT) != 0:
-            if (len(seq) != len(phi) + len(miss_res_NT) + 1) or (len(seq) != len(psi) + len(miss_res_NT) + 2):
-                file_skip.write(f'{pdb_code} {chain}\n')
-                continue
-            offset = 1
-            for i in range(1, len(seq)-1):
-                if i in miss_res_NT:
-                    offset += 1
-                elif i in miss_res_NT - 1 or i in miss_res_NT + 1:
-                    continue
-                else:
-                    seq_1.append(seq[i-1])
-                    seq_2.append(seq[i])
-                    seq_3.append(seq[i+1])
-                    phi_str.append(phi[i-offset-1])
-                    psi_str.append(psi[i+1-offset-1])
-                    resnum.append(int(i+1))
-        else:
-            if (len(seq) != len(phi) + 1) or (len(phi) != len(psi)):
-                file_skip.write(f'{pdb_code} {chain}\n')
-                continue
-            for i in range(1, len(phi)-1):
+        if (len(seq) != len(phi) + 1):
+#            traj.save('test.pdb')
+#            print(traj)
+#            print(f'{pdb_code} {chain}\n')
+#            print(len(seq))
+#            print(seq)
+#            print(len(phi))
+#            exit()
+            file_skip.write(f'{pdb_code} {chain}\n')
+            continue
+        
+        for i in range(1, len(psi)-1):
+            if res_num_list[i] == res_num_list[i-1]+1 and res_num_list[i] == res_num_list[i+1]-1:
                 seq_1.append(seq[i-1])
                 seq_2.append(seq[i])
                 seq_3.append(seq[i+1])
                 phi_str.append(phi[i-1])
                 psi_str.append(psi[i])
-                resnum.append(int(i+1))
+                resnum.append(res_num_list[i])
 
         temp_df = pd.DataFrame({'PDB': pdb_code, 'Chain': chain, 'Resnum': resnum, 'Res 1': seq_1, 'Res 2': seq_2, 'Res 3': seq_3, 'Phi': phi_str, 'Psi': psi_str})
         output_df = pd.concat([output_df, temp_df], ignore_index=True)
